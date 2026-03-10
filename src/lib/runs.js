@@ -8,11 +8,25 @@ import core from '@actions/core'
 import github from '@actions/github'
 
 export default async function ({ octokit, workflow_id, run_id, before }) {
-  // get current run of this workflow
-  const { data: { workflow_runs } } = await octokit.request('GET /repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs', {
-    ...github.context.repo,
-    workflow_id
-  })
+  // get current run of this workflow (retry on transient 500 errors)
+  let workflow_runs
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const { data } = await octokit.request('GET /repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs', {
+        ...github.context.repo,
+        workflow_id
+      })
+      workflow_runs = data.workflow_runs
+      break
+    } catch (error) {
+      if (error.status >= 500 && attempt < 3) {
+        core.warning(`GitHub API returned ${error.status}, retrying (${attempt}/3)...`)
+        await new Promise(resolve => setTimeout(resolve, attempt * 1000))
+      } else {
+        throw error
+      }
+    }
+  }
 
   // find any instances of the same workflow
   const waiting_for = workflow_runs
